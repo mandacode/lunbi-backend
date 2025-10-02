@@ -6,9 +6,11 @@ import csv
 import bs4
 import requests
 
+from .config import DATA_PATH, PROJECT_ROOT
+
 BASE_DIR = Path(__file__).resolve().parent
 SRC_FILE = "SB_publication_PMC.csv"
-CSV_PATH = BASE_DIR / "data" / SRC_FILE
+CSV_PATH = PROJECT_ROOT / "data" / SRC_FILE
 
 NEW_BASE_URL = "https://pmc.ncbi.nlm.nih.gov/articles/{article_id}/"
 headers = {
@@ -115,7 +117,7 @@ def main() -> None:
                 text += section_to_markdown(section)
 
             filename = to_snake_case(title) + '.md'
-            path = BASE_DIR / "data" / "articles" / filename
+            path = DATA_PATH / filename
             with open(path, "w", encoding="utf-8") as md_file:
                 md_file.write(text)
 

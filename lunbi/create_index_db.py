@@ -8,7 +8,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
 
-from config import DATA_PATH, CHROMA_PATH
+from .config import DATA_PATH, CHROMA_PATH
 
 load_dotenv()
 

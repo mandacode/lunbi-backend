@@ -7,7 +7,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from dotenv import load_dotenv
 
-from config import CHROMA_PATH
+from .config import CHROMA_PATH
+from .models import PromptStatus
 
 
 logger = logging.getLogger("lunbi.ask")
@@ -69,7 +70,7 @@ def ask_question(query: str) -> dict[str, Any]:
     query_lower = query.lower()
     wants_examples = any(keyword in query_lower for keyword in ["example", "prompt", "topic"])
 
-    if len(results) == 0 or results[0][1] < 0.5:
+    if len(results) == 0 or (results and results[0][1] < 0.5):
         if wants_examples:
             logger.info("Providing example prompts", extra={"query": query})
             examples = "\n".join(f"- {item}" for item in SCOPE_HINTS)
@@ -77,27 +78,36 @@ def ask_question(query: str) -> dict[str, Any]:
                 "Loo-loo! Here are some mission-ready questions you can ask me:\n"
                 f"{examples}"
             )
-            return {"answer": friendly_examples, "sources": []}
+            return {"answer": friendly_examples, "sources": [], "status": PromptStatus.SUCCESS}
 
         logger.warning("No relevant documents", extra={"query": query})
         friendly_response = (
             "Loo-loo! That question doesn't seem to orbit NASA or Space Biology. "
             "Could you ask me something from the space biology mission log instead?"
         )
-        return {"answer": friendly_response, "sources": []}
+        return {"answer": friendly_response, "sources": [], "status": PromptStatus.OUT_OF_CONTEXT}
 
     context = "\n\n---\n\n".join([doc.page_content for doc, _ in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
     prompt = prompt_template.format(context=context, question=query)
 
     model = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, streaming=False)
-    response = model.invoke(prompt)
+
+    try:
+        response = model.invoke(prompt)
+    except Exception as exc:  # pragma: no cover - network failures
+        logger.exception("Model invocation failed", extra={"query": query})
+        failure_message = (
+            "Loo-loo! I hit a cosmic glitch while generating the answer. "
+            "Please try again in a moment."
+        )
+        return {"answer": failure_message, "sources": [], "status": PromptStatus.FAILED}
 
     answer_text = getattr(response, "content", str(response))
 
-    sources = [doc.metadata["source"] for doc, _ in results]
+    sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
     logger.info("Answer generated", extra={"sources": sources})
-    return {"answer": answer_text, "sources": sources}
+    return {"answer": answer_text, "sources": sources, "status": PromptStatus.SUCCESS}
 
 
 
@@ -109,7 +119,9 @@ def main() -> None:
     result = ask_question(query=args.query)
 
     sources = ", ".join(result["sources"]) if result["sources"] else "none"
-    print(f"Answer: {result['answer']}\n\nSources: {sources}")
+    status = result.get("status")
+    status_text = status.value if isinstance(status, PromptStatus) else str(status)
+    print(f"Answer: {result['answer']}\nStatus: {status_text}\nSources: {sources}")
 
 
 if __name__ == "__main__":

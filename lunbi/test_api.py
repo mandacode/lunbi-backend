@@ -5,7 +5,8 @@ def test_api():
     query = "What are current NASA priorities in space biology?"
     data = {"query": query}
     response = requests.post(url, json=data)
-    print(response.json())
+    payload = response.json()
+    print(payload)
 
 
 

@@ -1,0 +1,46 @@
+version: '3.9'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lunbi-app
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-lunbi}
+      POSTGRES_USER: ${POSTGRES_USER:-lunbi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lunbi}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8808:8808"
+    volumes:
+      - ./:/app
+      - ./chroma:/app/chroma
+      - ./data:/app/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15
+    container_name: lunbi-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lunbi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lunbi}
+      POSTGRES_DB: ${POSTGRES_DB:-lunbi}
+    ports:
+      - "5439:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lunbi}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
