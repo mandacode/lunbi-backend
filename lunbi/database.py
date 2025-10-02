@@ -1,8 +1,9 @@
 import logging
 from contextlib import contextmanager
+from typing import Iterator
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from .config import DATABASE_URL
 
@@ -15,14 +16,14 @@ Base = declarative_base()
 
 
 def init_db() -> None:
-    from . import models  # noqa: F401  Ensures models are registered before create_all
+    from . import models  # noqa: F401
 
     logger.info("Creating database tables if they do not exist")
     Base.metadata.create_all(bind=engine)
 
 
 @contextmanager
-def get_session():
+def session_scope() -> Iterator[Session]:
     session = SessionLocal()
     try:
         yield session
@@ -32,3 +33,8 @@ def get_session():
         raise
     finally:
         session.close()
+
+
+def get_session() -> Iterator[Session]:
+    with session_scope() as session:
+        yield session
