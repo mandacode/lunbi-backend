@@ -35,6 +35,16 @@ def download_zip(target_path: Path) -> None:
         raise RuntimeError(f"Failed to download s3://{BUCKET_NAME}/{OBJECT_KEY}: {error}") from error
 
 
+def _clear_directory(path: Path) -> None:
+    if not path.exists():
+        return
+    for entry in path.iterdir():
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+
 def _copy_contents(source: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for entry in source.iterdir():
@@ -46,8 +56,8 @@ def _copy_contents(source: Path, destination: Path) -> None:
 
 
 def extract_zip(zip_path: Path, destination: Path) -> None:
-    if destination.exists():
-        shutil.rmtree(destination)
+    _clear_directory(destination)
+    destination.mkdir(parents=True, exist_ok=True)
     try:
         with zipfile.ZipFile(zip_path) as archive, tempfile.TemporaryDirectory() as tmp_dir:
             archive.extractall(tmp_dir)
