@@ -13,4 +13,4 @@ def get_db_session() -> Iterator[Session]:
 
 
 def get_prompt_service(session: Session = Depends(get_db_session)) -> PromptService:
-    return PromptService(prompt_repository=PromptRepository(session=session))
+    return PromptService(prompt_repository=PromptRepository(session))

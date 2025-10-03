@@ -6,7 +6,7 @@ import csv
 import bs4
 import requests
 
-from .config import DATA_PATH, PROJECT_ROOT
+from lunbi.config import DATA_PATH, PROJECT_ROOT
 
 BASE_DIR = Path(__file__).resolve().parent
 SRC_FILE = "SB_publication_PMC.csv"

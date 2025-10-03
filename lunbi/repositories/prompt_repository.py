@@ -1,3 +1,6 @@
+from typing import Sequence
+
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from lunbi.models import Prompt
@@ -13,10 +16,10 @@ class PromptRepository:
         self._session.flush()
         return prompt
 
-    def list_latest(self, limit: int = 20) -> list[Prompt]:
-        return (
-            self._session.query(Prompt)
+    def list_latest(self, limit: int = 20) -> Sequence[Prompt]:
+        stmt = (
+            select(Prompt)
             .order_by(Prompt.created_at.desc())
             .limit(limit)
-            .all()
         )
+        return self._session.execute(stmt).scalars().all()
