@@ -9,7 +9,7 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from lunbi.config import CHROMA_PATH
+from lunbi.config import CHROMA_PATH, AWS_SECRET_KEY, AWS_ACCESS_KEY_ID
 
 BUCKET_NAME = "lunbi"
 OBJECT_KEY = "chroma.zip"
@@ -24,7 +24,11 @@ def chroma_exists() -> bool:
 
 def download_zip(target_path: Path) -> None:
     try:
-        session = boto3.Session(region_name=REGION)
+        session = boto3.Session(
+            region_name=REGION,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_KEY,
+        )
         client = session.client("s3")
         client.download_file(BUCKET_NAME, OBJECT_KEY, str(target_path))
     except (BotoCoreError, ClientError) as error:
