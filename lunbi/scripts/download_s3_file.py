@@ -14,10 +14,12 @@ from lunbi.config import CHROMA_PATH
 BUCKET_NAME = "lunbi"
 OBJECT_KEY = "chroma.zip"
 REGION = "eu-west-1"
+INDEX_FILENAME = "chroma.sqlite3"
 
 
 def chroma_exists() -> bool:
-    return CHROMA_PATH.exists()
+    index_path = CHROMA_PATH / INDEX_FILENAME
+    return index_path.exists()
 
 
 def download_zip(target_path: Path) -> None:
@@ -29,30 +31,44 @@ def download_zip(target_path: Path) -> None:
         raise RuntimeError(f"Failed to download s3://{BUCKET_NAME}/{OBJECT_KEY}: {error}") from error
 
 
+def _copy_contents(source: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for entry in source.iterdir():
+        target = destination / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(entry, target)
+
+
 def extract_zip(zip_path: Path, destination: Path) -> None:
+    if destination.exists():
+        shutil.rmtree(destination)
     try:
-        with zipfile.ZipFile(zip_path) as archive:
-            members = [name for name in archive.namelist() if name.rstrip("/")]
-            if not members:
-                raise RuntimeError(f"Archive {zip_path} is empty")
-            top_level = {name.split("/", 1)[0] for name in members}
-            extract_to_parent = top_level == {destination.name}
-            if not extract_to_parent:
-                destination.mkdir(parents=True, exist_ok=False)
-            archive.extractall(destination.parent if extract_to_parent else destination)
+        with zipfile.ZipFile(zip_path) as archive, tempfile.TemporaryDirectory() as tmp_dir:
+            archive.extractall(tmp_dir)
+            staging = Path(tmp_dir)
+            candidates = [item for item in staging.iterdir() if item.name != "__MACOSX"]
+            if len(candidates) == 1 and candidates[0].is_dir():
+                source = candidates[0]
+            else:
+                source = staging
+            _copy_contents(source, destination)
     except zipfile.BadZipFile as error:
         shutil.rmtree(destination, ignore_errors=True)
         raise RuntimeError(f"Invalid zip archive at {zip_path}") from error
     except Exception:
         shutil.rmtree(destination, ignore_errors=True)
         raise
-    if not destination.exists():
-        raise RuntimeError(f"Extraction did not produce {destination}")
+    index_path = destination / INDEX_FILENAME
+    if not index_path.exists():
+        shutil.rmtree(destination, ignore_errors=True)
+        raise RuntimeError(f"Extraction did not produce {index_path}")
 
 
 def main() -> int:
     if chroma_exists():
-        print(f"Chroma directory already present at {CHROMA_PATH}; skipping download.")
+        print(f"Found {CHROMA_PATH / INDEX_FILENAME}; skipping download.")
         return 0
 
     with tempfile.TemporaryDirectory() as tmp_dir:

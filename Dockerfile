@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 COPY lunbi ./lunbi
 COPY data ./data
-COPY chroma ./chroma
 
+RUN mkdir -p chroma
 RUN chmod +x docker-entrypoint.sh
 RUN chown -R lunbi:lunbi /app
 
