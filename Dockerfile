@@ -14,14 +14,17 @@ RUN groupadd --system lunbi && useradd --system --gid lunbi --create-home --home
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 COPY lunbi ./lunbi
 COPY data ./data
 COPY chroma ./chroma
 
+RUN chmod +x docker-entrypoint.sh
 RUN chown -R lunbi:lunbi /app
 
 USER lunbi
 
 EXPOSE 8808
 
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["uvicorn", "lunbi.main:app", "--host", "0.0.0.0", "--port", "8808", "--reload"]
