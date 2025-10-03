@@ -1,10 +1,8 @@
-import logging
 from logging.config import dictConfig
 
 from fastapi import FastAPI
 
-from .api.routes import prompts
-from .database import init_db
+from lunbi.api.routes import prompts
 
 LOGGING_CONFIG = {
     "version": 1,
@@ -38,13 +36,6 @@ def create_app() -> FastAPI:
     app = FastAPI()
 
     app.include_router(prompts.router)
-
-    logger = logging.getLogger("lunbi.api")
-
-    @app.on_event("startup")
-    def startup_event() -> None:  # pragma: no cover - framework hook
-        logger.info("Initializing database")
-        init_db()
 
     @app.get("/")
     def read_root():

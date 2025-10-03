@@ -12,3 +12,4 @@ langchain-core
 sqlalchemy
 psycopg2-binary
 pytest
+alembic

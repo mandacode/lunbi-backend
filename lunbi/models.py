@@ -1,10 +1,9 @@
-from datetime import datetime, timezone
+import datetime
 import enum
 
 from sqlalchemy import Column, DateTime, Enum, Integer, Text
-from sqlalchemy.dialects.postgresql import JSONB
 
-from .database import Base
+from lunbi.database import Base
 
 
 class PromptStatus(str, enum.Enum):
@@ -18,9 +17,8 @@ class Prompt(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     query = Column(Text, nullable=False)
-    best_answer = Column(Text, nullable=True)
-    answers = Column(JSONB, nullable=False, default=list)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    answer = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.datetime.now(datetime.timezone.utc))
     status = Column(Enum(PromptStatus, name="prompt_status"), nullable=False, default=PromptStatus.SUCCESS)
 
     def __repr__(self) -> str:
