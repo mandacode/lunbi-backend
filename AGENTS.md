@@ -20,7 +20,7 @@ Load secrets via environment variables; never commit `.env` or credentials. Revi
 
 ## EXTRA TIPS
 
-- Use builtin collection types for typing, e.g. `list` or `dict`.
+- Use builtin collection types for typing, e.g. `list` or `dict`. Not Optional -> use str | None (pipe)
 - In imports:
   - builtin modules first: import full module: e.g. `import os`, `import datetime`, `import dataclasses`
   - then local modules: import an absolute path: e.g. `from lunbi.utils import ...`
