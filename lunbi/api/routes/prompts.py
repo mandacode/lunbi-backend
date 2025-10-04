@@ -17,7 +17,7 @@ def create_prompt(
     payload: PromptRequest,
     service: PromptService = Depends(get_prompt_service),
 ) -> PromptResponse:
-    result = service.process_prompt(payload.query)
+    result = service.process_prompt(payload.query, payload.language.value)
     logger.info("Processed prompt", extra={"prompt_id": result.get("prompt_id")})
     return PromptResponse(**result)
 
@@ -28,7 +28,7 @@ def stream_prompt(
     service: PromptService = Depends(get_prompt_service),
 ) -> StreamingResponse:
     logger.info("Streaming prompt response", extra={"query": payload.query})
-    stream = service.stream_prompt(payload.query)
+    stream = service.stream_prompt(payload.query, payload.language.value)
     return StreamingResponse(stream, media_type="application/json")
 
 

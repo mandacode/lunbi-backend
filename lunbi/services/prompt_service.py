@@ -11,12 +11,13 @@ from lunbi.repositories.prompt_repository import PromptRepository
 from lunbi.repositories.source_repository import SourceRepository
 from lunbi.services.article_metadata_service import ArticleMetadataService
 from lunbi.services.assistant_service import AssistantService
+from lunbi.services.translation_service import TranslationService
 
 logger = logging.getLogger("lunbi.prompt_service")
 
 
 class PromptService:
-    """Handles prompt answering and persistence."""
+    """Handles prompt answering, persistence, and optional translation."""
 
     def __init__(
         self,
@@ -24,22 +25,42 @@ class PromptService:
         assistant_service: AssistantService,
         source_repository: SourceRepository | None = None,
         metadata_service: ArticleMetadataService | None = None,
+        translation_service: TranslationService | None = None,
     ) -> None:
+        if source_repository is None and metadata_service is None:
+            raise ValueError("Source repository is required")
+
         self._prompt_repository = prompt_repository
         self._assistant_service = assistant_service
         self._source_repository = source_repository
-        if metadata_service is not None:
-            self._metadata_service = metadata_service
-        else:
-            if source_repository is None:
-                raise ValueError("Source repository is required when metadata_service is not provided")
-            self._metadata_service = ArticleMetadataService(repository=source_repository)
+        self._metadata_service = metadata_service or ArticleMetadataService(repository=source_repository)  # type: ignore[arg-type]
+        self._translation_service = translation_service or TranslationService()
 
-    def process_prompt(self, query: str) -> dict[str, Any]:
+    def process_prompt(self, query: str, language: str) -> dict[str, Any]:
         overall_start = perf_counter()
 
+        effective_language = language
+        effective_query = query
+        if language != "en":
+            translation_start = perf_counter()
+            try:
+                effective_query = self._translation_service.translate(
+                    query,
+                    target_language="en",
+                    source_language=language,  # type: ignore[arg-type]
+                )
+                translation_elapsed = perf_counter() - translation_start
+                logger.info(
+                    "Query translated",
+                    extra={"language": language, "duration_s": round(translation_elapsed, 3)},
+                )
+            except Exception:  # pragma: no cover - translation failure path
+                logger.exception("Failed to translate query", extra={"language": language})
+                effective_language = "en"
+                effective_query = query
+
         generation_start = perf_counter()
-        result = self.answer_prompt(query)
+        result = self.answer_prompt(effective_query)
         generation_elapsed = perf_counter() - generation_start
         status_enum = self._normalize_status(result.get("status"))
         logger.info(
@@ -77,6 +98,26 @@ class PromptService:
             },
         )
 
+        answer_text = result.get("answer", "")
+        answer_language = effective_language
+        if effective_language != "en":
+            translation_start = perf_counter()
+            try:
+                answer_text = self._translation_service.translate(
+                    answer_text,
+                    target_language=effective_language,  # type: ignore[arg-type]
+                    source_language="en",
+                )
+                translation_elapsed = perf_counter() - translation_start
+                logger.info(
+                    "Answer translated",
+                    extra={"language": effective_language, "duration_s": round(translation_elapsed, 3)},
+                )
+            except Exception:
+                logger.exception("Failed to translate answer", extra={"language": effective_language})
+                answer_language = "en"
+                answer_text = result.get("answer", "")
+
         total_elapsed = perf_counter() - overall_start
         logger.info(
             "Prompt processed",
@@ -85,27 +126,51 @@ class PromptService:
 
         response: dict[str, Any] = {
             "prompt_id": saved.id,
-            "answer": result.get("answer"),
+            "answer": answer_text,
             "status": status_enum.value,
+            "language": answer_language,
+            "sources": result.get("sources", []),
         }
         if source_payload:
             response["source"] = source_payload
         return response
 
-    def stream_prompt(self, query: str) -> Iterable[str]:
+    def stream_prompt(self, query: str, language: str) -> Iterable[str]:
         overall_start = perf_counter()
+
+        effective_language = language
+        effective_query = query
+        if language != "en":
+            translation_start = perf_counter()
+            try:
+                effective_query = self._translation_service.translate(
+                    query,
+                    target_language="en",
+                    source_language=language,  # type: ignore[arg-type]
+                )
+                translation_elapsed = perf_counter() - translation_start
+                logger.info(
+                    "Query translated",
+                    extra={"language": language, "duration_s": round(translation_elapsed, 3)},
+                )
+            except Exception:
+                logger.exception("Failed to translate query", extra={"language": language})
+                effective_language = "en"
+                effective_query = query
 
         answer_chunks: list[str] = []
         final_event: dict[str, Any] | None = None
 
         stream_start = perf_counter()
-        for event in self._assistant_service.stream_response(query):
+        emit_chunks = effective_language == "en"
+        for event in self._assistant_service.stream_response(effective_query):
             if event.get("type") == "chunk":
                 chunk = event.get("content", "")
                 if not chunk:
                     continue
                 answer_chunks.append(chunk)
-                yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
+                if emit_chunks:
+                    yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
             else:
                 final_event = event
 
@@ -154,6 +219,26 @@ class PromptService:
             extra={"prompt_id": saved.id, "duration_s": round(persistence_elapsed, 3)},
         )
 
+        final_answer = answer_text
+        final_language = effective_language
+        if effective_language != "en":
+            translation_start = perf_counter()
+            try:
+                final_answer = self._translation_service.translate(
+                    answer_text,
+                    target_language=effective_language,  # type: ignore[arg-type]
+                    source_language="en",
+                )
+                translation_elapsed = perf_counter() - translation_start
+                logger.info(
+                    "Stream answer translated",
+                    extra={"language": effective_language, "duration_s": round(translation_elapsed, 3)},
+                )
+            except Exception:
+                logger.exception("Failed to translate stream answer", extra={"language": effective_language})
+                final_language = "en"
+                final_answer = answer_text
+
         total_elapsed = perf_counter() - overall_start
         logger.info(
             "Stream prompt completed",
@@ -163,8 +248,10 @@ class PromptService:
         payload: dict[str, Any] = {
             "type": "final",
             "prompt_id": saved.id,
-            "answer": answer_text,
+            "answer": final_answer,
             "status": status_enum.value,
+            "language": final_language,
+            "sources": raw_sources,
         }
         if source_payload:
             payload["source"] = source_payload
@@ -187,7 +274,6 @@ class PromptService:
         if not candidates:
             return None, None
 
-        # Try repository lookup first for each candidate
         for raw in candidates:
             md_filename = Path(raw).name
             if self._source_repository is None:
@@ -206,7 +292,6 @@ class PromptService:
                 extra={"md_filename": md_filename, "duration_s": round(lookup_elapsed, 3)},
             )
 
-        # Fallback to metadata cache
         fallback_start = perf_counter()
         metadata = self._metadata_service.get_metadata_for_path(candidates[0])
         fallback_elapsed = perf_counter() - fallback_start

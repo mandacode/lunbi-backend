@@ -13,6 +13,7 @@ from lunbi.repositories.source_repository import SourceRepository
 from lunbi.services.article_metadata_service import ArticleMetadataService
 from lunbi.services.prompt_service import PromptService
 from lunbi.services.assistant_service import AssistantService
+from lunbi.services.translation_service import TranslationService
 
 
 def require_api_token(x_lunbi_token: str | None = Header(default=None, alias="X-Lunbi-Token")) -> None:
@@ -41,9 +42,11 @@ def get_db_session() -> Iterator[Session]:
 def get_prompt_service(session: Session = Depends(get_db_session)) -> PromptService:
     prompt_repository = PromptRepository(session)
     source_repository = SourceRepository(session)
+    translation_service = TranslationService()
     return PromptService(
         prompt_repository=prompt_repository,
         assistant_service=AssistantService(),
         source_repository=source_repository,
         metadata_service=ArticleMetadataService(repository=source_repository),
+        translation_service=translation_service,
     )
