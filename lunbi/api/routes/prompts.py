@@ -27,7 +27,7 @@ def stream_prompt(
     payload: PromptRequest,
     service: PromptService = Depends(get_prompt_service),
 ) -> StreamingResponse:
-    logger.info("Streaming prompt response", extra={"query": payload.query})
+    logger.info(f"Streaming prompt response: query={payload.query}, language={payload.language.value},")
     stream = service.stream_prompt(payload.query, payload.language.value)
     headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
     return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
