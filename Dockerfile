@@ -12,7 +12,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -g $GID lunbi && useradd -m -u $UID -g $GID lunbi
+RUN groupadd --gid ${GID:-1000} lunbi || true \n    && useradd --uid ${UID:-1000} --gid ${GID:-1000} --create-home --home-dir /home/lunbi --shell /bin/bash lunbi
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt

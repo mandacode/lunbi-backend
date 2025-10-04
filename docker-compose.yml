@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   app:
     build:
@@ -14,6 +12,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-lunbi}
       POSTGRES_USER: ${POSTGRES_USER:-lunbi}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lunbi}
+      HOME: /tmp
     depends_on:
       postgres:
         condition: service_healthy
