@@ -14,6 +14,8 @@ CHROMA_PATH = PROJECT_ROOT / "chroma"
 EMBEDDING_MODEL = "text-embedding-3-small"
 MODEL = "gpt-4o-mini"
 MODEL_TEMPERATURE = 0.3
+# API security
+LUNBI_API_TOKEN = os.getenv("LUNBI_API_TOKEN")
 # Database
 POSTGRES_USER = os.getenv("POSTGRES_USER", "lunbi")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "lunbi")

@@ -3,11 +3,11 @@ import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from lunbi.api.deps import get_prompt_service
+from lunbi.api.deps import get_prompt_service, require_api_token
 from lunbi.api.schemas import PromptRequest, PromptResponse, SamplePromptsResponse
 from lunbi.services.prompt_service import PromptService
 
-router = APIRouter(prefix="/prompts", tags=["Prompts"])
+router = APIRouter(prefix="/prompts", tags=["Prompts"], dependencies=[Depends(require_api_token)])
 
 logger = logging.getLogger("lunbi.api.prompts")
 
