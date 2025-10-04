@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterable
+from uuid import uuid4
 
 from lunbi.models import Prompt, PromptStatus, Source
 from lunbi.repositories.prompt_repository import PromptRepository
@@ -17,7 +18,7 @@ logger = logging.getLogger("lunbi.prompt_service")
 
 
 class PromptService:
-    """Handles prompt answering, persistence, and optional translation."""
+    """Handles prompt answering and persistence."""
 
     def __init__(
         self,
@@ -36,31 +37,32 @@ class PromptService:
         self._metadata_service = metadata_service or ArticleMetadataService(repository=source_repository)  # type: ignore[arg-type]
         self._translation_service = translation_service or TranslationService()
 
+    def _prepare_query(self, query: str, language: str) -> tuple[str, str]:
+        if language == "en":
+            return query, language
+        translation_start = perf_counter()
+        try:
+            translated = self._translation_service.translate(
+                query,
+                target_language="en",
+                source_language=language,  # type: ignore[arg-type]
+            )
+            elapsed = perf_counter() - translation_start
+            logger.info(
+                "Query translated",
+                extra={"language": language, "duration_s": round(elapsed, 3)},
+            )
+            return translated, language
+        except Exception:
+            logger.exception("Failed to translate query", extra={"language": language})
+            return query, "en"
+
     def process_prompt(self, query: str, language: str) -> dict[str, Any]:
         overall_start = perf_counter()
-
-        effective_language = language
-        effective_query = query
-        if language != "en":
-            translation_start = perf_counter()
-            try:
-                effective_query = self._translation_service.translate(
-                    query,
-                    target_language="en",
-                    source_language=language,  # type: ignore[arg-type]
-                )
-                translation_elapsed = perf_counter() - translation_start
-                logger.info(
-                    "Query translated",
-                    extra={"language": language, "duration_s": round(translation_elapsed, 3)},
-                )
-            except Exception:  # pragma: no cover - translation failure path
-                logger.exception("Failed to translate query", extra={"language": language})
-                effective_language = "en"
-                effective_query = query
+        effective_query, effective_language = self._prepare_query(query, language)
 
         generation_start = perf_counter()
-        result = self.answer_prompt(effective_query)
+        result = self._assistant_service.generate_response(effective_query, language=effective_language)
         generation_elapsed = perf_counter() - generation_start
         status_enum = self._normalize_status(result.get("status"))
         logger.info(
@@ -98,26 +100,6 @@ class PromptService:
             },
         )
 
-        answer_text = result.get("answer", "")
-        answer_language = effective_language
-        if effective_language != "en":
-            translation_start = perf_counter()
-            try:
-                answer_text = self._translation_service.translate(
-                    answer_text,
-                    target_language=effective_language,  # type: ignore[arg-type]
-                    source_language="en",
-                )
-                translation_elapsed = perf_counter() - translation_start
-                logger.info(
-                    "Answer translated",
-                    extra={"language": effective_language, "duration_s": round(translation_elapsed, 3)},
-                )
-            except Exception:
-                logger.exception("Failed to translate answer", extra={"language": effective_language})
-                answer_language = "en"
-                answer_text = result.get("answer", "")
-
         total_elapsed = perf_counter() - overall_start
         logger.info(
             "Prompt processed",
@@ -126,9 +108,9 @@ class PromptService:
 
         response: dict[str, Any] = {
             "prompt_id": saved.id,
-            "answer": answer_text,
+            "answer": result.get("answer"),
             "status": status_enum.value,
-            "language": answer_language,
+            "language": effective_language,
             "sources": result.get("sources", []),
         }
         if source_payload:
@@ -137,40 +119,39 @@ class PromptService:
 
     def stream_prompt(self, query: str, language: str) -> Iterable[str]:
         overall_start = perf_counter()
-
-        effective_language = language
-        effective_query = query
-        if language != "en":
-            translation_start = perf_counter()
-            try:
-                effective_query = self._translation_service.translate(
-                    query,
-                    target_language="en",
-                    source_language=language,  # type: ignore[arg-type]
-                )
-                translation_elapsed = perf_counter() - translation_start
-                logger.info(
-                    "Query translated",
-                    extra={"language": language, "duration_s": round(translation_elapsed, 3)},
-                )
-            except Exception:
-                logger.exception("Failed to translate query", extra={"language": language})
-                effective_language = "en"
-                effective_query = query
+        effective_query, effective_language = self._prepare_query(query, language)
 
         answer_chunks: list[str] = []
         final_event: dict[str, Any] | None = None
+        response_id = f"resp_{uuid4().hex}"
+        message_id = f"msg_{uuid4().hex}"
+        role_sent = False
+
+        def _sse(data: dict[str, Any]) -> str:
+            return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        yield _sse({"type": "response.created", "response": response_id})
 
         stream_start = perf_counter()
-        emit_chunks = effective_language == "en"
-        for event in self._assistant_service.stream_response(effective_query):
+        for event in self._assistant_service.stream_response(effective_query, language=effective_language):
             if event.get("type") == "chunk":
                 chunk = event.get("content", "")
                 if not chunk:
                     continue
                 answer_chunks.append(chunk)
-                if emit_chunks:
-                    yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
+                yield _sse({"type": "response.output_text.delta", "response": response_id, "text": chunk})
+                delta: dict[str, Any] = {"content": [{"type": "text", "text": chunk}]}
+                if not role_sent:
+                    delta["role"] = "assistant"
+                    role_sent = True
+                yield _sse(
+                    {
+                        "type": "response.message.delta",
+                        "response": response_id,
+                        "message": message_id,
+                        "delta": delta,
+                    }
+                )
             else:
                 final_event = event
 
@@ -219,46 +200,46 @@ class PromptService:
             extra={"prompt_id": saved.id, "duration_s": round(persistence_elapsed, 3)},
         )
 
-        final_answer = answer_text
-        final_language = effective_language
-        if effective_language != "en":
-            translation_start = perf_counter()
-            try:
-                final_answer = self._translation_service.translate(
-                    answer_text,
-                    target_language=effective_language,  # type: ignore[arg-type]
-                    source_language="en",
-                )
-                translation_elapsed = perf_counter() - translation_start
-                logger.info(
-                    "Stream answer translated",
-                    extra={"language": effective_language, "duration_s": round(translation_elapsed, 3)},
-                )
-            except Exception:
-                logger.exception("Failed to translate stream answer", extra={"language": effective_language})
-                final_language = "en"
-                final_answer = answer_text
-
         total_elapsed = perf_counter() - overall_start
         logger.info(
             "Stream prompt completed",
             extra={"prompt_id": saved.id, "duration_s": round(total_elapsed, 3)},
         )
 
-        payload: dict[str, Any] = {
-            "type": "final",
+        message_metadata: dict[str, Any] = {
             "prompt_id": saved.id,
-            "answer": final_answer,
             "status": status_enum.value,
-            "language": final_language,
+            "language": effective_language,
             "sources": raw_sources,
         }
         if source_payload:
-            payload["source"] = source_payload
-        yield json.dumps(payload) + "\n"
+            message_metadata["source"] = source_payload
 
-    def answer_prompt(self, query: str) -> dict[str, Any]:
-        return self._assistant_service.generate_response(query)
+        yield _sse(
+            {
+                "type": "response.output_text.done",
+                "response": response_id,
+                "text": answer_text,
+            }
+        )
+
+        yield _sse(
+            {
+                "type": "response.message",
+                "response": response_id,
+                "message": {
+                    "id": message_id,
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": answer_text}],
+                    "metadata": message_metadata,
+                },
+            }
+        )
+
+        yield _sse({"type": "response.completed", "response": response_id})
+
+    def answer_prompt(self, query: str, language: str = "en") -> dict[str, Any]:
+        return self._assistant_service.generate_response(query, language=language)
 
     def get_sample_prompts(self) -> list[str]:
         return self._assistant_service.get_scope_hints()

@@ -29,7 +29,8 @@ def stream_prompt(
 ) -> StreamingResponse:
     logger.info("Streaming prompt response", extra={"query": payload.query})
     stream = service.stream_prompt(payload.query, payload.language.value)
-    return StreamingResponse(stream, media_type="application/json")
+    headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
+    return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
 
 
 @router.get("/samples", response_model=SamplePromptsResponse)

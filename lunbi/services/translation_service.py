@@ -40,7 +40,7 @@ class TranslationService:
             "Translate the following content from "
             f"{LANGUAGE_NAMES[source_language]} to {LANGUAGE_NAMES[target_language]}. "
             "Preserve technical terminology and keep the tone formal.\n\n"
-            f"Content:\n{text}\n"
+            f"Content:\n{text}"
         )
         logger.debug(
             "Translating content",

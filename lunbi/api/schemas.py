@@ -27,6 +27,7 @@ class PromptResponse(BaseModel):
     status: str
     prompt_id: Optional[int] = None
     source: Optional[SourceSchema] = None
+    sources: List[str] = Field(default_factory=list)
     language: Language = Field(Language.EN, description="Language of the answer")
 
 

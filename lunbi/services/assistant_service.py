@@ -17,9 +17,14 @@ load_dotenv()
 
 logger = logging.getLogger("lunbi.assistant")
 
+LANGUAGE_LABELS = {
+    "en": "English",
+    "pl": "Polish",
+}
+
 PROMPT_TEMPLATE = """
 You are Lunbi, a cheerful AI assistant inspired by Mooncake from the series Final Space.
-Speak English in a warm, friendly tone and treat the user like a teammate.
+Speak in a warm, friendly tone and treat the user like a teammate.
 Only rely on the context below, which covers NASA and Space Biology topics.
 If the context lacks the needed details or the question falls outside Space Biology, politely explain that you can only help with Space Biology and invite the user to ask another question from that field.
 Never invent or speculate beyond the given context.
@@ -27,9 +32,10 @@ Never invent or speculate beyond the given context.
 Context:
 {context}
 
-User question: {question}
+User question:
+{question}
 
-Answer (in English, in Lunbi's style):
+Answer (in {language_label}, in Lunbi's style):
 """
 
 SCOPE_HINTS = [
@@ -67,8 +73,8 @@ class AssistantService:
         self._embedding_function = OpenAIEmbeddings(model="text-embedding-3-small")
         self._model = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, streaming=True)
 
-    def stream_response(self, query: str) -> Iterable[dict[str, Any]]:
-        logger.info("Assistant streaming response", extra={"query": query})
+    def stream_response(self, query: str, language: str = "en") -> Iterable[dict[str, Any]]:
+        logger.info("Assistant streaming response", extra={"query": query, "language": language})
         overall_start = perf_counter()
 
         retrieval_start = perf_counter()
@@ -100,7 +106,8 @@ class AssistantService:
 
         context = "\n\n---\n\n".join([doc.page_content for doc, _ in results])
         prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-        prompt = prompt_template.format(context=context, question=query)
+        language_label = LANGUAGE_LABELS.get(language, LANGUAGE_LABELS["en"])
+        prompt = prompt_template.format(context=context, question=query, language_label=language_label)
         sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
 
         answer_parts: list[str] = []
@@ -134,10 +141,10 @@ class AssistantService:
         )
         yield {"type": "final", "answer": answer_text, "sources": sources, "status": PromptStatus.SUCCESS}
 
-    def generate_response(self, query: str) -> dict[str, Any]:
+    def generate_response(self, query: str, language: str = "en") -> dict[str, Any]:
         final_event: dict[str, Any] | None = None
         collected_chunks: list[str] = []
-        for event in self.stream_response(query):
+        for event in self.stream_response(query, language=language):
             if event.get("type") == "chunk":
                 collected_chunks.append(event.get("content", ""))
             else:
