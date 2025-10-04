@@ -39,9 +39,11 @@ def get_db_session() -> Iterator[Session]:
 
 
 def get_prompt_service(session: Session = Depends(get_db_session)) -> PromptService:
+    prompt_repository = PromptRepository(session)
+    source_repository = SourceRepository(session)
     return PromptService(
-        prompt_repository=PromptRepository(session),
+        prompt_repository=prompt_repository,
         assistant_service=AssistantService(),
-        source_repository=SourceRepository(session),
-        metadata_service=ArticleMetadataService(),
+        source_repository=source_repository,
+        metadata_service=ArticleMetadataService(repository=source_repository),
     )

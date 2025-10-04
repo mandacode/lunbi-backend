@@ -45,3 +45,7 @@ class SourceRepository:
         self._session.add(source)
         self._session.flush()
         return source
+
+    def list_all(self) -> list[Source]:
+        stmt = select(Source)
+        return list(self._session.execute(stmt).scalars())
