@@ -126,7 +126,7 @@ class PromptService:
         message_id = f"msg_{uuid4().hex}"
 
         def _sse(data: dict[str, Any]) -> str:
-            return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+            return f"{json.dumps(data, ensure_ascii=False)}\n\n"
 
         stream_start = perf_counter()
         for event in self._assistant_service.stream_response(effective_query, language=effective_language):
