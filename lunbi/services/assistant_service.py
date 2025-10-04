@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Iterable
 
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
+from langchain_core.messages import AIMessageChunk
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
@@ -63,10 +64,10 @@ class AssistantService:
 
     def __init__(self) -> None:
         self._embedding_function = OpenAIEmbeddings(model="text-embedding-3-small")
-        self._model = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, streaming=False)
+        self._model = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, streaming=True)
 
-    def generate_response(self, query: str) -> dict[str, Any]:
-        logger.info("Assistant generating response", extra={"query": query})
+    def stream_response(self, query: str) -> Iterable[dict[str, Any]]:
+        logger.info("Assistant streaming response", extra={"query": query})
 
         db = Chroma(persist_directory=str(CHROMA_PATH), embedding_function=self._embedding_function)
         results = db.similarity_search_with_relevance_scores(query, k=3)
@@ -82,31 +83,58 @@ class AssistantService:
                     "Loo-loo! Here are some mission-ready questions you can ask me:\n"
                     f"{examples}"
                 )
-                return {"answer": friendly_examples, "sources": [], "status": PromptStatus.SUCCESS}
+                yield {"type": "final", "answer": friendly_examples, "sources": [], "status": PromptStatus.SUCCESS}
+                return
 
             logger.warning("No relevant documents", extra={"query": query})
-
-            return {"answer": FRIENDLY_RESPONSE, "sources": [], "status": PromptStatus.OUT_OF_CONTEXT}
+            yield {"type": "final", "answer": FRIENDLY_RESPONSE, "sources": [], "status": PromptStatus.OUT_OF_CONTEXT}
+            return
 
         context = "\n\n---\n\n".join([doc.page_content for doc, _ in results])
         prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
         prompt = prompt_template.format(context=context, question=query)
+        sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
 
+        answer_parts: list[str] = []
         try:
-            response = self._model.invoke(prompt)
+            for chunk in self._model.stream(prompt):
+                content = chunk.content if isinstance(chunk, AIMessageChunk) else getattr(chunk, "content", "")
+                if not content:
+                    continue
+                answer_parts.append(content)
+                yield {"type": "chunk", "content": content}
         except Exception:  # pragma: no cover - network failure path
             logger.exception("Model invocation failed", extra={"query": query})
             failure_message = (
                 "Loo-loo! I hit a cosmic glitch while generating the answer. "
                 "Please try again in a moment."
             )
-            return {"answer": failure_message, "sources": [], "status": PromptStatus.FAILED}
+            yield {"type": "final", "answer": failure_message, "sources": [], "status": PromptStatus.FAILED}
+            return
 
-        answer_text = getattr(response, "content", str(response))
-        sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
+        answer_text = "".join(answer_parts)
+        yield {"type": "final", "answer": answer_text, "sources": sources, "status": PromptStatus.SUCCESS}
+
+    def generate_response(self, query: str) -> dict[str, Any]:
+        final_event: dict[str, Any] | None = None
+        collected_chunks: list[str] = []
+        for event in self.stream_response(query):
+            if event.get("type") == "chunk":
+                collected_chunks.append(event.get("content", ""))
+            else:
+                final_event = event
+
+        if final_event is None:
+            answer_text = "".join(collected_chunks)
+            logger.warning("No final event from stream", extra={"query": query})
+            return {"answer": answer_text, "sources": [], "status": PromptStatus.FAILED}
+
+        answer_text = final_event.get("answer", "".join(collected_chunks))
+        sources = final_event.get("sources", [])
+        status = final_event.get("status", PromptStatus.SUCCESS)
 
         logger.info("Answer generated", extra={"sources": sources})
-        return {"answer": answer_text, "sources": sources, "status": PromptStatus.SUCCESS}
+        return {"answer": answer_text, "sources": sources, "status": status}
 
     def get_scope_hints(self) -> list[str]:
         return SCOPE_HINTS

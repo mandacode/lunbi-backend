@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any
+from typing import Any, Iterable
 
 from lunbi.models import Prompt, PromptStatus
 from lunbi.repositories.prompt_repository import PromptRepository
@@ -35,6 +36,44 @@ class PromptService:
             "sources": result.get("sources", []),
             "status": status_enum.value,
         }
+
+    def stream_prompt(self, query: str) -> Iterable[str]:
+        answer_chunks: list[str] = []
+        final_event: dict[str, Any] | None = None
+
+        for event in self._assistant_service.stream_response(query):
+            if event.get("type") == "chunk":
+                chunk = event.get("content", "")
+                if not chunk:
+                    continue
+                answer_chunks.append(chunk)
+                yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
+            else:
+                final_event = event
+
+        if final_event is None:
+            final_event = {
+                "type": "final",
+                "answer": "".join(answer_chunks),
+                "sources": [],
+                "status": PromptStatus.FAILED,
+            }
+
+        answer_text = final_event.get("answer", "".join(answer_chunks))
+        sources = final_event.get("sources", [])
+        status_enum = self._normalize_status(final_event.get("status", PromptStatus.SUCCESS))
+
+        record = Prompt(query=query, answer=answer_text, status=status_enum)
+        saved = self._prompt_repository.add(record)
+
+        payload = {
+            "type": "final",
+            "prompt_id": saved.id,
+            "answer": answer_text,
+            "sources": sources,
+            "status": status_enum.value,
+        }
+        yield json.dumps(payload) + "\n"
 
     def answer_prompt(self, query: str) -> dict[str, Any]:
         return self._assistant_service.generate_response(query)
