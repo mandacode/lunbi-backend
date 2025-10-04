@@ -25,8 +25,6 @@ RUN mkdir -p chroma
 RUN chmod +x docker-entrypoint.sh
 RUN chown -R lunbi:lunbi /app
 
-USER lunbi
-
 EXPOSE 8808
 
 ENTRYPOINT ["./docker-entrypoint.sh"]

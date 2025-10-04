@@ -28,7 +28,12 @@ class PromptService:
         self._prompt_repository = prompt_repository
         self._assistant_service = assistant_service
         self._source_repository = source_repository
-        self._metadata_service = metadata_service or ArticleMetadataService()
+        if metadata_service is not None:
+            self._metadata_service = metadata_service
+        else:
+            if source_repository is None:
+                raise ValueError("Source repository is required when metadata_service is not provided")
+            self._metadata_service = ArticleMetadataService(repository=source_repository)
 
     def process_prompt(self, query: str) -> dict[str, Any]:
         overall_start = perf_counter()
@@ -201,44 +206,35 @@ class PromptService:
                 extra={"md_filename": md_filename, "duration_s": round(lookup_elapsed, 3)},
             )
 
-        # Fallback to CSV metadata service
-        for raw in candidates:
-            md_filename = Path(raw).name
-            metadata_start = perf_counter()
-            try:
-                metadata = self._metadata_service.get_metadata_for_path(md_filename)
-            except FileNotFoundError:
-                logger.warning("Metadata CSV not found when resolving sources")
-                return None, None
-            metadata_elapsed = perf_counter() - metadata_start
-            if not metadata:
-                logger.debug(
-                    "No metadata match for candidate",
-                    extra={"md_filename": md_filename, "duration_s": round(metadata_elapsed, 3)},
-                )
-                continue
-
-            logger.info(
-                "Metadata resolved",
-                extra={"md_filename": md_filename, "duration_s": round(metadata_elapsed, 3)},
+        # Fallback to metadata cache
+        fallback_start = perf_counter()
+        metadata = self._metadata_service.get_metadata_for_path(candidates[0])
+        fallback_elapsed = perf_counter() - fallback_start
+        if not metadata:
+            logger.debug(
+                "Unable to resolve source",
+                extra={"candidates": candidates, "duration_s": round(fallback_elapsed, 3)},
             )
-            record = None
-            if self._source_repository is not None:
-                repo_start = perf_counter()
-                record = self._source_repository.upsert(
-                    title=metadata.title,
-                    url=metadata.url,
-                    md_filename=md_filename,
-                )
-                repo_elapsed = perf_counter() - repo_start
-                logger.info(
-                    "Source upserted",
-                    extra={"md_filename": md_filename, "duration_s": round(repo_elapsed, 3)},
-                )
-            return record, {"title": metadata.title, "url": metadata.url}
+            return None, None
 
-        logger.debug("Unable to resolve source", extra={"candidates": candidates})
-        return None, None
+        logger.info(
+            "Metadata resolved",
+            extra={"md_filename": candidates[0], "duration_s": round(fallback_elapsed, 3)},
+        )
+        record = None
+        if self._source_repository is not None:
+            repo_start = perf_counter()
+            record = self._source_repository.upsert(
+                title=metadata.title,
+                url=metadata.url,
+                md_filename=candidates[0],
+            )
+            repo_elapsed = perf_counter() - repo_start
+            logger.info(
+                "Source upserted",
+                extra={"md_filename": candidates[0], "duration_s": round(repo_elapsed, 3)},
+            )
+        return record, {"title": metadata.title, "url": metadata.url}
 
     @staticmethod
     def _normalize_status(raw_status: str | PromptStatus) -> PromptStatus:
