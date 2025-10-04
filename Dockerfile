@@ -26,6 +26,7 @@ RUN chmod +x docker-entrypoint.sh
 RUN chown -R lunbi:lunbi /app
 
 EXPOSE 8808
+RUN mkdir -p /app/chroma && chown -R lunbi:lunbi /app/chroma
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["uvicorn", "lunbi.main:app", "--host", "0.0.0.0", "--port", "8808", "--reload"]
