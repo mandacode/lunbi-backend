@@ -1,22 +1,37 @@
+from __future__ import annotations
+
+import os
 from collections.abc import Iterator
 
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
-from lunbi.config import LUNBI_API_TOKEN
+from lunbi.config import API_TOKEN
 from lunbi.database import get_session
 from lunbi.repositories.prompt_repository import PromptRepository
+from lunbi.repositories.source_repository import SourceRepository
+from lunbi.services.article_metadata_service import ArticleMetadataService
 from lunbi.services.prompt_service import PromptService
 from lunbi.services.assistant_service import AssistantService
 
 
-def require_api_token(lunbi_token: str | None = Header(default=None, alias="X-Lunbi-Token")) -> None:
-    if LUNBI_API_TOKEN is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="API token not configured")
-    if not lunbi_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing API token")
-    if lunbi_token != LUNBI_API_TOKEN:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API token")
+def require_api_token(x_lunbi_token: str | None = Header(default=None, alias="X-Lunbi-Token")) -> None:
+    token = API_TOKEN or os.getenv("LUNBI_API_TOKEN")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API token not configured",
+        )
+    if not x_lunbi_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API token",
+        )
+    if x_lunbi_token != token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API token",
+        )
 
 
 def get_db_session() -> Iterator[Session]:
@@ -24,4 +39,9 @@ def get_db_session() -> Iterator[Session]:
 
 
 def get_prompt_service(session: Session = Depends(get_db_session)) -> PromptService:
-    return PromptService(prompt_repository=PromptRepository(session), assistant_service=AssistantService())
+    return PromptService(
+        prompt_repository=PromptRepository(session),
+        assistant_service=AssistantService(),
+        source_repository=SourceRepository(session),
+        metadata_service=ArticleMetadataService(),
+    )

@@ -2,7 +2,7 @@ import argparse
 import logging
 from typing import Any
 
-from lunbi.services.prompt_service import PromptService
+from lunbi.services.assistant_service import AssistantService
 
 logger = logging.getLogger("lunbi.ask")
 if not logger.handlers:
@@ -13,9 +13,9 @@ if not logger.handlers:
 
 
 def ask_question(query: str) -> dict[str, Any]:
-    logger.info("Answering prompt via PromptService", extra={"query": query})
-    service = PromptService()
-    return service.answer_prompt(query)
+    logger.info("Answering prompt via AssistantService", extra={"query": query})
+    service = AssistantService()
+    return service.generate_response(query)
 
 
 def main() -> None:
