@@ -126,7 +126,7 @@ class PromptService:
         message_id = f"msg_{uuid4().hex}"
 
         def _sse(data: dict[str, Any]) -> str:
-            return f"{json.dumps(data, ensure_ascii=False)}\n"
+            return json.dumps(data, ensure_ascii=False) + "\n"
 
         stream_start = perf_counter()
         for event in self._assistant_service.stream_response(effective_query, language=effective_language):
@@ -140,14 +140,6 @@ class PromptService:
                         "id": message_id,
                         "role": "assistant",
                         "content": chunk,
-                        "parts": [
-                            {"type": 'step-start'},
-                            {
-                                "type": 'text',
-                                "text": chunk,
-                                "state": 'streaming'
-                            }
-                        ]
                     }
                 )
             else:
@@ -178,14 +170,6 @@ class PromptService:
                     "id": message_id,
                     "role": "assistant",
                     "content": answer_text,
-                    "parts": [
-                        {"type": 'step-start'},
-                        {
-                            "type": 'text',
-                            "text": answer_text,
-                            "state": 'streaming'
-                        }
-                    ]
                 }
             )
 
