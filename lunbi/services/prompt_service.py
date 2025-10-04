@@ -135,7 +135,21 @@ class PromptService:
                 if not chunk:
                     continue
                 answer_chunks.append(chunk)
-                yield _sse({"id": message_id, "role": "assistant", "content": chunk})
+                yield _sse(
+                    {
+                        "id": message_id,
+                        "role": "assistant",
+                        "content": chunk,
+                        "parts": [
+                            {"type": 'step-start'},
+                            {
+                                "type": 'text',
+                                "text": chunk,
+                                "state": 'streaming'
+                            }
+                        ]
+                    }
+                )
             else:
                 final_event = event
 
