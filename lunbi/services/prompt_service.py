@@ -194,7 +194,8 @@ class PromptService:
         )
 
         # Client expects only incremental content frames with id/role/content
-        yield "data: [DONE]\n\n"
+        # yield "data: [DONE]\n\n"
+        yield "\n"
 
     def answer_prompt(self, query: str, language: str = "en") -> dict[str, Any]:
         return self._assistant_service.generate_response(query, language=language)
