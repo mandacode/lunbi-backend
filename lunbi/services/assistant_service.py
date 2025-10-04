@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from time import perf_counter
 from typing import Any, Iterable
 
 from dotenv import load_dotenv
@@ -68,9 +69,16 @@ class AssistantService:
 
     def stream_response(self, query: str) -> Iterable[dict[str, Any]]:
         logger.info("Assistant streaming response", extra={"query": query})
+        overall_start = perf_counter()
 
+        retrieval_start = perf_counter()
         db = Chroma(persist_directory=str(CHROMA_PATH), embedding_function=self._embedding_function)
         results = db.similarity_search_with_relevance_scores(query, k=3)
+        retrieval_elapsed = perf_counter() - retrieval_start
+        logger.info(
+            "Vector search completed",
+            extra={"query": query, "results": len(results), "duration_s": round(retrieval_elapsed, 3)},
+        )
 
         query_lower = query.lower()
         wants_examples = any(keyword in query_lower for keyword in ["example", "prompt", "topic"])
@@ -96,6 +104,7 @@ class AssistantService:
         sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
 
         answer_parts: list[str] = []
+        stream_start = perf_counter()
         try:
             for chunk in self._model.stream(prompt):
                 content = chunk.content if isinstance(chunk, AIMessageChunk) else getattr(chunk, "content", "")
@@ -113,6 +122,16 @@ class AssistantService:
             return
 
         answer_text = "".join(answer_parts)
+        stream_elapsed = perf_counter() - stream_start
+        logger.info(
+            "Model stream finished",
+            extra={"query": query, "duration_s": round(stream_elapsed, 3), "tokens": len(answer_text)},
+        )
+        total_elapsed = perf_counter() - overall_start
+        logger.info(
+            "Assistant response ready",
+            extra={"query": query, "duration_s": round(total_elapsed, 3)},
+        )
         yield {"type": "final", "answer": answer_text, "sources": sources, "status": PromptStatus.SUCCESS}
 
     def generate_response(self, query: str) -> dict[str, Any]:

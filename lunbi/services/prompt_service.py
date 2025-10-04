@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Iterable
 
 from lunbi.models import Prompt, PromptStatus, Source
 from lunbi.repositories.prompt_repository import PromptRepository
 from lunbi.repositories.source_repository import SourceRepository
-from lunbi.services.article_metadata_service import ArticleMetadata, ArticleMetadataService
+from lunbi.services.article_metadata_service import ArticleMetadataService
 from lunbi.services.assistant_service import AssistantService
 
 logger = logging.getLogger("lunbi.prompt_service")
@@ -30,20 +31,53 @@ class PromptService:
         self._metadata_service = metadata_service or ArticleMetadataService()
 
     def process_prompt(self, query: str) -> dict[str, Any]:
+        overall_start = perf_counter()
+
+        generation_start = perf_counter()
         result = self.answer_prompt(query)
+        generation_elapsed = perf_counter() - generation_start
         status_enum = self._normalize_status(result.get("status"))
+        logger.info(
+            "Prompt generation completed",
+            extra={"query": query, "duration_s": round(generation_elapsed, 3)},
+        )
 
+        metadata_start = perf_counter()
         source_record, source_payload = self._prepare_source(result.get("sources", []))
+        metadata_elapsed = perf_counter() - metadata_start
+        logger.info(
+            "Source preparation finished",
+            extra={
+                "query": query,
+                "duration_s": round(metadata_elapsed, 3),
+                "resolved": bool(source_payload),
+            },
+        )
 
+        persistence_start = perf_counter()
         record = Prompt(
             query=query,
             answer=result.get("answer"),
             status=status_enum,
-            source_id=source_record.id if source_record else None,
+            source_id=source_record.id if isinstance(source_record, Source) else None,
         )
         saved = self._prompt_repository.add(record)
+        persistence_elapsed = perf_counter() - persistence_start
+        logger.info(
+            "Prompt persisted",
+            extra={
+                "prompt_id": saved.id,
+                "status": saved.status.value,
+                "duration_s": round(persistence_elapsed, 3),
+            },
+        )
 
-        logger.info("Prompt processed", extra={"prompt_id": saved.id, "status": saved.status.value})
+        total_elapsed = perf_counter() - overall_start
+        logger.info(
+            "Prompt processed",
+            extra={"prompt_id": saved.id, "duration_s": round(total_elapsed, 3)},
+        )
+
         response: dict[str, Any] = {
             "prompt_id": saved.id,
             "answer": result.get("answer"),
@@ -54,9 +88,12 @@ class PromptService:
         return response
 
     def stream_prompt(self, query: str) -> Iterable[str]:
+        overall_start = perf_counter()
+
         answer_chunks: list[str] = []
         final_event: dict[str, Any] | None = None
 
+        stream_start = perf_counter()
         for event in self._assistant_service.stream_response(query):
             if event.get("type") == "chunk":
                 chunk = event.get("content", "")
@@ -68,6 +105,7 @@ class PromptService:
                 final_event = event
 
         if final_event is None:
+            logger.warning("Stream finished without final event", extra={"query": query})
             final_event = {
                 "type": "final",
                 "answer": "".join(answer_chunks),
@@ -75,19 +113,47 @@ class PromptService:
                 "status": PromptStatus.FAILED,
             }
 
+        stream_elapsed = perf_counter() - stream_start
+        logger.info(
+            "Stream consumption completed",
+            extra={"query": query, "duration_s": round(stream_elapsed, 3)},
+        )
+
         answer_text = final_event.get("answer", "".join(answer_chunks))
         raw_sources = final_event.get("sources", [])
         status_enum = self._normalize_status(final_event.get("status", PromptStatus.SUCCESS))
 
+        metadata_start = perf_counter()
         source_record, source_payload = self._prepare_source(raw_sources)
+        metadata_elapsed = perf_counter() - metadata_start
+        logger.info(
+            "Stream source preparation finished",
+            extra={
+                "query": query,
+                "duration_s": round(metadata_elapsed, 3),
+                "resolved": bool(source_payload),
+            },
+        )
 
+        persistence_start = perf_counter()
         record = Prompt(
             query=query,
             answer=answer_text,
             status=status_enum,
-            source_id=source_record.id if source_record else None,
+            source_id=source_record.id if isinstance(source_record, Source) else None,
         )
         saved = self._prompt_repository.add(record)
+        persistence_elapsed = perf_counter() - persistence_start
+        logger.info(
+            "Stream prompt persisted",
+            extra={"prompt_id": saved.id, "duration_s": round(persistence_elapsed, 3)},
+        )
+
+        total_elapsed = perf_counter() - overall_start
+        logger.info(
+            "Stream prompt completed",
+            extra={"prompt_id": saved.id, "duration_s": round(total_elapsed, 3)},
+        )
 
         payload: dict[str, Any] = {
             "type": "final",
@@ -108,35 +174,71 @@ class PromptService:
     def _prepare_source(self, sources: list[str] | str | None) -> tuple[Source | None, dict[str, str] | None]:
         if not sources:
             return None, None
+
         if isinstance(sources, str):
             candidates = [sources]
         else:
             candidates = [item for item in sources if item]
         if not candidates:
             return None, None
-        try:
-            metadata = self._resolve_metadata(candidates)
-        except FileNotFoundError:
-            logger.warning("Metadata CSV not found when resolving sources")
-            return None, None
-        if metadata is None:
-            logger.debug("No metadata match for sources", extra={"sources": candidates})
-            return None, None
-        source_record = None
-        if self._source_repository is not None:
-            source_record = self._source_repository.upsert(title=metadata.title, url=metadata.url)
-        payload = {"title": metadata.title, "url": metadata.url}
-        return source_record, payload
 
-    def _resolve_metadata(self, sources: list[str]) -> ArticleMetadata | None:
-        for raw in sources:
-            path = Path(raw)
-            candidates = [path, Path(path.name)]
-            for candidate in candidates:
-                metadata = self._metadata_service.get_metadata_for_path(candidate)
-                if metadata:
-                    return metadata
-        return None
+        # Try repository lookup first for each candidate
+        for raw in candidates:
+            md_filename = Path(raw).name
+            if self._source_repository is None:
+                break
+            lookup_start = perf_counter()
+            record = self._source_repository.get_by_md_filename(md_filename)
+            lookup_elapsed = perf_counter() - lookup_start
+            if record:
+                logger.info(
+                    "Source lookup succeeded",
+                    extra={"md_filename": md_filename, "duration_s": round(lookup_elapsed, 3)},
+                )
+                return record, {"title": record.title, "url": record.url}
+            logger.debug(
+                "Source lookup missed",
+                extra={"md_filename": md_filename, "duration_s": round(lookup_elapsed, 3)},
+            )
+
+        # Fallback to CSV metadata service
+        for raw in candidates:
+            md_filename = Path(raw).name
+            metadata_start = perf_counter()
+            try:
+                metadata = self._metadata_service.get_metadata_for_path(md_filename)
+            except FileNotFoundError:
+                logger.warning("Metadata CSV not found when resolving sources")
+                return None, None
+            metadata_elapsed = perf_counter() - metadata_start
+            if not metadata:
+                logger.debug(
+                    "No metadata match for candidate",
+                    extra={"md_filename": md_filename, "duration_s": round(metadata_elapsed, 3)},
+                )
+                continue
+
+            logger.info(
+                "Metadata resolved",
+                extra={"md_filename": md_filename, "duration_s": round(metadata_elapsed, 3)},
+            )
+            record = None
+            if self._source_repository is not None:
+                repo_start = perf_counter()
+                record = self._source_repository.upsert(
+                    title=metadata.title,
+                    url=metadata.url,
+                    md_filename=md_filename,
+                )
+                repo_elapsed = perf_counter() - repo_start
+                logger.info(
+                    "Source upserted",
+                    extra={"md_filename": md_filename, "duration_s": round(repo_elapsed, 3)},
+                )
+            return record, {"title": metadata.title, "url": metadata.url}
+
+        logger.debug("Unable to resolve source", extra={"candidates": candidates})
+        return None, None
 
     @staticmethod
     def _normalize_status(raw_status: str | PromptStatus) -> PromptStatus:

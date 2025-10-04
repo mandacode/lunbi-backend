@@ -19,6 +19,7 @@ class Source(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(Text, nullable=False)
     url = Column(Text, nullable=False, unique=True)
+    md_filename = Column(Text, nullable=False, unique=True, index=True)
 
     prompts = relationship("Prompt", back_populates="source")
 

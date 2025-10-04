@@ -18,14 +18,30 @@ class SourceRepository:
         stmt = select(Source).where(Source.url == url)
         return self._session.execute(stmt).scalar_one_or_none()
 
-    def upsert(self, title: str, url: str) -> Source:
-        existing = self.get_by_url(url)
-        if existing:
-            if existing.title != title:
-                existing.title = title
+    def get_by_md_filename(self, md_filename: str) -> Optional[Source]:
+        stmt = select(Source).where(Source.md_filename == md_filename)
+        return self._session.execute(stmt).scalar_one_or_none()
+
+    def upsert(self, title: str, url: str, md_filename: str) -> Source:
+        source = self.get_by_md_filename(md_filename)
+        if source is None:
+            source = self.get_by_url(url)
+        if source:
+            updated = False
+            if source.title != title:
+                source.title = title
+                updated = True
+            if source.url != url:
+                source.url = url
+                updated = True
+            if source.md_filename != md_filename:
+                source.md_filename = md_filename
+                updated = True
+            if updated:
                 self._session.flush()
-            return existing
-        source = Source(title=title, url=url)
+            return source
+
+        source = Source(title=title, url=url, md_filename=md_filename)
         self._session.add(source)
         self._session.flush()
         return source

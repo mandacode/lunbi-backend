@@ -24,10 +24,13 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("url", sa.Text(), nullable=False),
+        sa.Column("md_filename", sa.Text(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("url"),
+        sa.UniqueConstraint("md_filename"),
     )
     op.create_index(op.f("ix_sources_id"), "sources", ["id"], unique=False)
+    op.create_index(op.f("ix_sources_md_filename"), "sources", ["md_filename"], unique=True)
 
     op.add_column("prompts", sa.Column("source_id", sa.Integer(), nullable=True))
     op.create_foreign_key(
@@ -43,5 +46,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_constraint("prompts_source_id_fkey", "prompts", type_="foreignkey")
     op.drop_column("prompts", "source_id")
+    op.drop_index(op.f("ix_sources_md_filename"), table_name="sources")
     op.drop_index(op.f("ix_sources_id"), table_name="sources")
     op.drop_table("sources")
