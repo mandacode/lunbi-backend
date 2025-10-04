@@ -30,8 +30,8 @@ def stream_prompt(
     logger.info(f"Streaming prompt response: query={payload.query}, language={payload.language.value},")
     stream = service.stream_prompt(payload.query, payload.language.value)
     headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
-    return StreamingResponse(stream, media_type="plain/text")
-    # return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
+    # return StreamingResponse(stream, media_type="plain/text")
+    return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
 
 
 @router.get("/samples", response_model=SamplePromptsResponse)
