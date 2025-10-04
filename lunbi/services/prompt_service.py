@@ -123,14 +123,10 @@ class PromptService:
 
         answer_chunks: list[str] = []
         final_event: dict[str, Any] | None = None
-        response_id = f"resp_{uuid4().hex}"
         message_id = f"msg_{uuid4().hex}"
-        role_sent = False
 
         def _sse(data: dict[str, Any]) -> str:
             return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-        yield _sse({"type": "response.created", "response": response_id})
 
         stream_start = perf_counter()
         for event in self._assistant_service.stream_response(effective_query, language=effective_language):
@@ -139,19 +135,7 @@ class PromptService:
                 if not chunk:
                     continue
                 answer_chunks.append(chunk)
-                yield _sse({"type": "response.output_text.delta", "response": response_id, "text": chunk})
-                delta: dict[str, Any] = {"content": [{"type": "text", "text": chunk}]}
-                if not role_sent:
-                    delta["role"] = "assistant"
-                    role_sent = True
-                yield _sse(
-                    {
-                        "type": "response.message.delta",
-                        "response": response_id,
-                        "message": message_id,
-                        "delta": delta,
-                    }
-                )
+                yield _sse({"id": message_id, "role": "assistant", "content": chunk})
             else:
                 final_event = event
 
@@ -206,37 +190,8 @@ class PromptService:
             extra={"prompt_id": saved.id, "duration_s": round(total_elapsed, 3)},
         )
 
-        message_metadata: dict[str, Any] = {
-            "prompt_id": saved.id,
-            "status": status_enum.value,
-            "language": effective_language,
-            "sources": raw_sources,
-        }
-        if source_payload:
-            message_metadata["source"] = source_payload
-
-        yield _sse(
-            {
-                "type": "response.output_text.done",
-                "response": response_id,
-                "text": answer_text,
-            }
-        )
-
-        yield _sse(
-            {
-                "type": "response.message",
-                "response": response_id,
-                "message": {
-                    "id": message_id,
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": answer_text}],
-                    "metadata": message_metadata,
-                },
-            }
-        )
-
-        yield _sse({"type": "response.completed", "response": response_id})
+        # Client expects only incremental content frames with id/role/content
+        yield "data: [DONE]\n\n"
 
     def answer_prompt(self, query: str, language: str = "en") -> dict[str, Any]:
         return self._assistant_service.generate_response(query, language=language)
