@@ -159,7 +159,21 @@ class PromptService:
         status_enum = self._normalize_status(final_event.get("status", PromptStatus.SUCCESS))
 
         if not answer_chunks and answer_text:
-            yield _sse({"id": message_id, "role": "assistant", "content": answer_text})
+            yield _sse(
+                {
+                    "id": message_id,
+                    "role": "assistant",
+                    "content": answer_text,
+                    "parts": [
+                        {"type": 'step-start'},
+                        {
+                            "type": 'text',
+                            "text": answer_text,
+                            "state": 'streaming'
+                        }
+                    ]
+                }
+            )
 
         metadata_start = perf_counter()
         source_record, source_payload = self._prepare_source(raw_sources)
