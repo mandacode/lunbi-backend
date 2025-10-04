@@ -158,6 +158,9 @@ class PromptService:
         raw_sources = final_event.get("sources", [])
         status_enum = self._normalize_status(final_event.get("status", PromptStatus.SUCCESS))
 
+        if not answer_chunks and answer_text:
+            yield _sse({"id": message_id, "role": "assistant", "content": answer_text})
+
         metadata_start = perf_counter()
         source_record, source_payload = self._prepare_source(raw_sources)
         metadata_elapsed = perf_counter() - metadata_start
