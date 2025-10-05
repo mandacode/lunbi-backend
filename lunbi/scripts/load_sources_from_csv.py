@@ -14,7 +14,7 @@ logger = logging.getLogger("lunbi.load_sources")
 
 def load_sources(csv_path: Path) -> None:
     csv_path = csv_path.expanduser().resolve()
-    logger.info("Loading sources", extra={"csv_path": str(csv_path)})
+    logger.info("Loading sources from %s", csv_path)
 
     created = 0
     updated = 0
@@ -55,7 +55,12 @@ def load_sources(csv_path: Path) -> None:
             elif snapshot != (source.title, source.url):
                 updated += 1
 
-    logger.info(f"Source import finished -> created: {created}, updated: {updated}, skipped: {skipped}")
+    logger.info(
+        "Source import finished -> created: %s, updated: %s, skipped: %s",
+        created,
+        updated,
+        skipped,
+    )
 
 
 def main() -> None:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from time import perf_counter
 from typing import Any, Iterable
 from uuid import uuid4
 
@@ -40,49 +39,30 @@ class PromptService:
     def _prepare_query(self, query: str, language: str) -> tuple[str, str]:
         if language == "en":
             return query, language
-        translation_start = perf_counter()
         try:
             translated = self._translation_service.translate(
                 query,
                 target_language="en",
                 source_language=language,  # type: ignore[arg-type]
             )
-            elapsed = perf_counter() - translation_start
-            logger.info(
-                "Query translated",
-                extra={"language": language, "duration_s": round(elapsed, 3)},
-            )
+            logger.info("Translated query from %s to English", language)
             return translated, language
         except Exception:
-            logger.exception("Failed to translate query", extra={"language": language})
+            logger.exception("Failed to translate query from %s", language)
             return query, "en"
 
     def process_prompt(self, query: str, language: str) -> dict[str, Any]:
-        overall_start = perf_counter()
         effective_query, effective_language = self._prepare_query(query, language)
 
-        generation_start = perf_counter()
+        message_id = f"msg_{uuid4().hex}"
         result = self._assistant_service.generate_response(effective_query, language=effective_language)
-        generation_elapsed = perf_counter() - generation_start
         status_enum = self._normalize_status(result.get("status"))
-        logger.info(
-            "Prompt generation completed",
-            extra={"query": query, "duration_s": round(generation_elapsed, 3)},
-        )
+        raw_sources = result.get("sources", [])
+        source_record, source_payload = self._prepare_source(raw_sources)
+        logger.info("Prompt generation completed for '%s' (status=%s)", query, status_enum.value)
+        if source_payload:
+            logger.info("Resolved source for '%s' -> %s", query, source_payload.get("title"))
 
-        metadata_start = perf_counter()
-        source_record, source_payload = self._prepare_source(result.get("sources", []))
-        metadata_elapsed = perf_counter() - metadata_start
-        logger.info(
-            "Source preparation finished",
-            extra={
-                "query": query,
-                "duration_s": round(metadata_elapsed, 3),
-                "resolved": bool(source_payload),
-            },
-        )
-
-        persistence_start = perf_counter()
         record = Prompt(
             query=query,
             answer=result.get("answer"),
@@ -90,35 +70,21 @@ class PromptService:
             source_id=source_record.id if isinstance(source_record, Source) else None,
         )
         saved = self._prompt_repository.add(record)
-        persistence_elapsed = perf_counter() - persistence_start
-        logger.info(
-            "Prompt persisted",
-            extra={
-                "prompt_id": saved.id,
-                "status": saved.status.value,
-                "duration_s": round(persistence_elapsed, 3),
-            },
-        )
-
-        total_elapsed = perf_counter() - overall_start
-        logger.info(
-            "Prompt processed",
-            extra={"prompt_id": saved.id, "duration_s": round(total_elapsed, 3)},
-        )
+        logger.info("Prompt persisted with id=%s and status=%s", saved.id, saved.status.value)
 
         response: dict[str, Any] = {
+            "id": message_id,
+            "role": "assistant",
             "prompt_id": saved.id,
             "answer": result.get("answer"),
             "status": status_enum.value,
             "language": effective_language,
-            "sources": result.get("sources", []),
         }
         if source_payload:
             response["source"] = source_payload
         return response
 
     def stream_prompt(self, query: str, language: str) -> Iterable[str]:
-        overall_start = perf_counter()
         effective_query, effective_language = self._prepare_query(query, language)
 
         answer_chunks: list[str] = []
@@ -128,7 +94,6 @@ class PromptService:
         def _sse(data: dict[str, Any]) -> str:
             return json.dumps(data, ensure_ascii=False) + "\n"
 
-        stream_start = perf_counter()
         for event in self._assistant_service.stream_response(effective_query, language=effective_language):
             if event.get("type") == "chunk":
                 chunk = event.get("content", "")
@@ -146,19 +111,13 @@ class PromptService:
                 final_event = event
 
         if final_event is None:
-            logger.warning("Stream finished without final event", extra={"query": query})
+            logger.warning("Stream finished without final event for query '%s'", query)
             final_event = {
                 "type": "final",
                 "answer": "".join(answer_chunks),
                 "sources": [],
                 "status": PromptStatus.FAILED,
             }
-
-        stream_elapsed = perf_counter() - stream_start
-        logger.info(
-            "Stream consumption completed",
-            extra={"query": query, "duration_s": round(stream_elapsed, 3)},
-        )
 
         answer_text = final_event.get("answer", "".join(answer_chunks))
         raw_sources = final_event.get("sources", [])
@@ -173,19 +132,10 @@ class PromptService:
                 }
             )
 
-        metadata_start = perf_counter()
         source_record, source_payload = self._prepare_source(raw_sources)
-        metadata_elapsed = perf_counter() - metadata_start
-        logger.info(
-            "Stream source preparation finished",
-            extra={
-                "query": query,
-                "duration_s": round(metadata_elapsed, 3),
-                "resolved": bool(source_payload),
-            },
-        )
+        if source_payload:
+            logger.info("Resolved source for streamed prompt '%s' -> %s", query, source_payload.get("title"))
 
-        persistence_start = perf_counter()
         record = Prompt(
             query=query,
             answer=answer_text,
@@ -193,21 +143,10 @@ class PromptService:
             source_id=source_record.id if isinstance(source_record, Source) else None,
         )
         saved = self._prompt_repository.add(record)
-        persistence_elapsed = perf_counter() - persistence_start
-        logger.info(
-            "Stream prompt persisted",
-            extra={"prompt_id": saved.id, "duration_s": round(persistence_elapsed, 3)},
-        )
+        logger.info("Stream prompt persisted with id=%s and status=%s", saved.id, saved.status.value)
 
-        total_elapsed = perf_counter() - overall_start
-        logger.info(
-            "Stream prompt completed",
-            extra={"prompt_id": saved.id, "duration_s": round(total_elapsed, 3)},
-        )
-
-        # Client expects only incremental content frames with id/role/content
-        # yield "data: [DONE]\n\n"
-        yield "\n"
+        # Client expects only incremental content frames and a final terminator
+        yield "data: [DONE]\n\n"
 
     def answer_prompt(self, query: str, language: str = "en") -> dict[str, Any]:
         return self._assistant_service.generate_response(query, language=language)
@@ -230,47 +169,26 @@ class PromptService:
             md_filename = Path(raw).name
             if self._source_repository is None:
                 break
-            lookup_start = perf_counter()
             record = self._source_repository.get_by_md_filename(md_filename)
-            lookup_elapsed = perf_counter() - lookup_start
             if record:
-                logger.info(
-                    "Source lookup succeeded",
-                    extra={"md_filename": md_filename, "duration_s": round(lookup_elapsed, 3)},
-                )
+                logger.info("Source lookup succeeded for %s", md_filename)
                 return record, {"title": record.title, "url": record.url}
-            logger.debug(
-                "Source lookup missed",
-                extra={"md_filename": md_filename, "duration_s": round(lookup_elapsed, 3)},
-            )
+            logger.debug("Source lookup missed for %s", md_filename)
 
-        fallback_start = perf_counter()
         metadata = self._metadata_service.get_metadata_for_path(candidates[0])
-        fallback_elapsed = perf_counter() - fallback_start
         if not metadata:
-            logger.debug(
-                "Unable to resolve source",
-                extra={"candidates": candidates, "duration_s": round(fallback_elapsed, 3)},
-            )
+            logger.debug("Unable to resolve source from candidates: %s", candidates)
             return None, None
 
-        logger.info(
-            "Metadata resolved",
-            extra={"md_filename": candidates[0], "duration_s": round(fallback_elapsed, 3)},
-        )
+        logger.info("Metadata resolved for %s", candidates[0])
         record = None
         if self._source_repository is not None:
-            repo_start = perf_counter()
             record = self._source_repository.upsert(
                 title=metadata.title,
                 url=metadata.url,
                 md_filename=candidates[0],
             )
-            repo_elapsed = perf_counter() - repo_start
-            logger.info(
-                "Source upserted",
-                extra={"md_filename": candidates[0], "duration_s": round(repo_elapsed, 3)},
-            )
+            logger.info("Source upserted for %s", candidates[0])
         return record, {"title": metadata.title, "url": metadata.url}
 
     @staticmethod
@@ -281,5 +199,5 @@ class PromptService:
             try:
                 return PromptStatus(raw_status)
             except ValueError:
-                logger.warning("Unknown status", extra={"status": raw_status})
+                logger.warning("Unknown status value '%s'", raw_status)
         return PromptStatus.SUCCESS

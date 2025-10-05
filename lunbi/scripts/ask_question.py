@@ -13,7 +13,7 @@ if not logger.handlers:
 
 
 def ask_question(query: str) -> dict[str, Any]:
-    logger.info("Answering prompt via AssistantService", extra={"query": query})
+    logger.info("Answering prompt via AssistantService (query=%s)", query)
     service = AssistantService()
     return service.generate_response(query)
 

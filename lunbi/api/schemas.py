@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional, Literal
 from enum import Enum
 
 
@@ -23,11 +23,12 @@ class PromptRequest(BaseModel):
 
 
 class PromptResponse(BaseModel):
+    id: str
+    role: Literal["assistant"] = Field("assistant", description="Speaker role for the response")
     answer: str
     status: str
     prompt_id: Optional[int] = None
     source: Optional[SourceSchema] = None
-    sources: List[str] = Field(default_factory=list)
     language: Language = Field(Language.EN, description="Language of the answer")
 
 

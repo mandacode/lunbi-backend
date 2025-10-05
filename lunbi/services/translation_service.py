@@ -43,8 +43,7 @@ class TranslationService:
             f"Content:\n{text}"
         )
         logger.debug(
-            "Translating content",
-            extra={"source_language": source_language, "target_language": target_language},
+            "Translating content from %s to %s", LANGUAGE_NAMES[source_language], LANGUAGE_NAMES[target_language]
         )
         response = self._model.invoke(prompt)
         return getattr(response, "content", str(response))

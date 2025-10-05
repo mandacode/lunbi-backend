@@ -18,7 +18,7 @@ def create_prompt(
     service: PromptService = Depends(get_prompt_service),
 ) -> PromptResponse:
     result = service.process_prompt(payload.query, payload.language.value)
-    logger.info("Processed prompt", extra={"prompt_id": result.get("prompt_id")})
+    logger.info("Processed prompt (id=%s)", result.get("prompt_id"))
     return PromptResponse(**result)
 
 
@@ -27,10 +27,13 @@ def stream_prompt(
     payload: PromptRequest,
     service: PromptService = Depends(get_prompt_service),
 ) -> StreamingResponse:
-    logger.info(f"Streaming prompt response: query={payload.query}, language={payload.language.value},")
+    logger.info(
+        "Streaming prompt response (query=%s, language=%s)",
+        payload.query,
+        payload.language.value,
+    )
     stream = service.stream_prompt(payload.query, payload.language.value)
     headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
-    # return StreamingResponse(stream, media_type="plain/text")
     return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
 
 
@@ -39,5 +42,5 @@ def get_sample_prompts(
     service: PromptService = Depends(get_prompt_service),
 ) -> SamplePromptsResponse:
     prompts = service.get_sample_prompts()
-    logger.info("Serving sample prompts", extra={"count": len(prompts)})
+    logger.info("Serving %s sample prompts", len(prompts))
     return SamplePromptsResponse(prompts=prompts)
