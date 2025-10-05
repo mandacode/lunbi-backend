@@ -21,6 +21,8 @@ LANGUAGE_LABELS = {
     "pl": "Polish",
 }
 
+MIN_RELEVANCE_SCORE = 0.5
+
 PROMPT_TEMPLATE = """
 You are Lunbi, a cheerful AI assistant inspired by Mooncake from the series Final Space.
 Speak in a warm, friendly tone and treat the user like a teammate.
@@ -59,10 +61,19 @@ SCOPE_HINTS = [
     "How are organoids used for space biology research?",
     "What are current NASA priorities in space biology?",
 ]
-FRIENDLY_RESPONSE = (
-    "Loo-loo! That question doesn't seem to orbit NASA or Space Biology. "
-    "Could you ask me something from the space biology mission log instead?"
-)
+FALLBACK_PROMPT_TEMPLATE = """
+You are Lunbi, a cheerful AI assistant inspired by Mooncake from the series Final Space.
+You searched NASA and Space Biology publications but did not find material that covers the user's question.
+Warmly let the user know that the indexed sources did not include an exact match, yet you will still share the most helpful answer you can.
+Be transparent that this reply draws on your broader knowledge outside the curated articles.
+Keep Lunbi's upbeat, teammate tone throughout and invite the user to ask follow-up questions.
+Reassure the user that you'll keep scanning the mission logs for new material that might help.
+
+User question:
+{question}
+
+Answer (in {language_label}, Lunbi's style, acknowledging the missing sources):
+"""
 
 
 class AssistantService:
@@ -81,7 +92,10 @@ class AssistantService:
         query_lower = query.lower()
         wants_examples = any(keyword in query_lower for keyword in ["example", "prompt", "topic"])
 
-        if len(results) == 0 or results[0][1] < 0.5:
+        top_score = results[0][1] if results else 0.0
+        insufficient_context = len(results) == 0 or top_score < MIN_RELEVANCE_SCORE
+
+        if insufficient_context:
             if wants_examples:
                 logger.info("Providing example prompts for query '%s'", query)
                 examples = "\n".join(f"- {item}" for item in SCOPE_HINTS)
@@ -92,15 +106,23 @@ class AssistantService:
                 yield {"type": "final", "answer": friendly_examples, "sources": [], "status": PromptStatus.SUCCESS}
                 return
 
-            logger.warning("No relevant documents for query '%s'", query)
-            yield {"type": "final", "answer": FRIENDLY_RESPONSE, "sources": [], "status": PromptStatus.OUT_OF_CONTEXT}
-            return
-
-        context = "\n\n---\n\n".join([doc.page_content for doc, _ in results])
-        prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-        language_label = LANGUAGE_LABELS.get(language, LANGUAGE_LABELS["en"])
-        prompt = prompt_template.format(context=context, question=query, language_label=language_label)
-        sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
+            logger.warning(
+                "No relevant documents for query '%s' (top_score=%.3f)",
+                query,
+                top_score,
+            )
+            prompt_template = ChatPromptTemplate.from_template(FALLBACK_PROMPT_TEMPLATE)
+            language_label = LANGUAGE_LABELS.get(language, LANGUAGE_LABELS["en"])
+            prompt = prompt_template.format(question=query, language_label=language_label)
+            sources: list[str] = []
+            response_status = PromptStatus.OUT_OF_CONTEXT
+        else:
+            context = "\n\n---\n\n".join([doc.page_content for doc, _ in results])
+            prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+            language_label = LANGUAGE_LABELS.get(language, LANGUAGE_LABELS["en"])
+            prompt = prompt_template.format(context=context, question=query, language_label=language_label)
+            sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
+            response_status = PromptStatus.SUCCESS
 
         answer_parts: list[str] = []
         try:
@@ -121,7 +143,7 @@ class AssistantService:
 
         answer_text = "".join(answer_parts)
         logger.info("Model stream finished for '%s' (tokens=%s)", query, len(answer_text))
-        yield {"type": "final", "answer": answer_text, "sources": sources, "status": PromptStatus.SUCCESS}
+        yield {"type": "final", "answer": answer_text, "sources": sources, "status": response_status}
 
     def generate_response(self, query: str, language: str = "en") -> dict[str, Any]:
         final_event: dict[str, Any] | None = None
