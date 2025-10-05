@@ -83,6 +83,26 @@ class AssistantService:
         self._embedding_function = OpenAIEmbeddings(model="text-embedding-3-small")
         self._model = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, streaming=True)
 
+    def _build_prompt(
+        self,
+        query: str,
+        language: str,
+        results: list[tuple[Any, float]],
+    ) -> tuple[str, list[str], PromptStatus, float]:
+        top_score = results[0][1] if results else 0.0
+        language_label = LANGUAGE_LABELS.get(language, LANGUAGE_LABELS["en"])
+
+        if not results or top_score < MIN_RELEVANCE_SCORE:
+            template = ChatPromptTemplate.from_template(FALLBACK_PROMPT_TEMPLATE)
+            prompt = template.format(question=query, language_label=language_label)
+            return prompt, [], PromptStatus.OUT_OF_CONTEXT, top_score
+
+        context = "\n\n---\n\n".join([doc.page_content for doc, _ in results])
+        template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+        prompt = template.format(context=context, question=query, language_label=language_label)
+        sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
+        return prompt, sources, PromptStatus.SUCCESS, top_score
+
     def stream_response(self, query: str, language: str = "en") -> Iterable[dict[str, Any]]:
         logger.info("Assistant streaming response (query=%s, language=%s)", query, language)
         db = Chroma(persist_directory=str(CHROMA_PATH), embedding_function=self._embedding_function)
@@ -92,10 +112,9 @@ class AssistantService:
         query_lower = query.lower()
         wants_examples = any(keyword in query_lower for keyword in ["example", "prompt", "topic"])
 
-        top_score = results[0][1] if results else 0.0
-        insufficient_context = len(results) == 0 or top_score < MIN_RELEVANCE_SCORE
+        prompt, sources, response_status, top_score = self._build_prompt(query, language, results)
 
-        if insufficient_context:
+        if response_status is PromptStatus.OUT_OF_CONTEXT:
             if wants_examples:
                 logger.info("Providing example prompts for query '%s'", query)
                 examples = "\n".join(f"- {item}" for item in SCOPE_HINTS)
@@ -111,18 +130,6 @@ class AssistantService:
                 query,
                 top_score,
             )
-            prompt_template = ChatPromptTemplate.from_template(FALLBACK_PROMPT_TEMPLATE)
-            language_label = LANGUAGE_LABELS.get(language, LANGUAGE_LABELS["en"])
-            prompt = prompt_template.format(question=query, language_label=language_label)
-            sources: list[str] = []
-            response_status = PromptStatus.OUT_OF_CONTEXT
-        else:
-            context = "\n\n---\n\n".join([doc.page_content for doc, _ in results])
-            prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-            language_label = LANGUAGE_LABELS.get(language, LANGUAGE_LABELS["en"])
-            prompt = prompt_template.format(context=context, question=query, language_label=language_label)
-            sources = [doc.metadata.get("source") for doc, _ in results if doc.metadata.get("source")]
-            response_status = PromptStatus.SUCCESS
 
         answer_parts: list[str] = []
         try:

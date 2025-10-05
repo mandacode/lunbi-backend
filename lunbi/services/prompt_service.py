@@ -63,14 +63,12 @@ class PromptService:
         if source_payload:
             logger.info("Resolved source for '%s' -> %s", query, source_payload.get("title"))
 
-        record = Prompt(
+        saved = self._persist_prompt_record(
             query=query,
             answer=result.get("answer"),
             status=status_enum,
-            source_id=source_record.id if isinstance(source_record, Source) else None,
+            source_record=source_record,
         )
-        saved = self._prompt_repository.add(record)
-        logger.info("Prompt persisted with id=%s and status=%s", saved.id, saved.status.value)
 
         response: dict[str, Any] = {
             "id": message_id,
@@ -136,14 +134,7 @@ class PromptService:
         if source_payload:
             logger.info("Resolved source for streamed prompt '%s' -> %s", query, source_payload.get("title"))
 
-        record = Prompt(
-            query=query,
-            answer=answer_text,
-            status=status_enum,
-            source_id=source_record.id if isinstance(source_record, Source) else None,
-        )
-        saved = self._prompt_repository.add(record)
-        logger.info("Stream prompt persisted with id=%s and status=%s", saved.id, saved.status.value)
+        saved = self._persist_prompt_record(query, answer_text, status_enum, source_record)
 
         # Client expects only incremental content frames and a final terminator
         yield "data: [DONE]\n\n"
@@ -191,6 +182,22 @@ class PromptService:
             logger.info("Source upserted for %s", candidates[0])
         return record, {"title": metadata.title, "url": metadata.url}
 
+    def _persist_prompt_record(
+        self,
+        query: str,
+        answer: str | None,
+        status: PromptStatus,
+        source_record: Source | None,
+    ) -> Prompt:
+        record = Prompt(
+            query=query,
+            answer=answer,
+            status=status,
+            source_id=source_record.id if isinstance(source_record, Source) else None,
+        )
+        saved = self._prompt_repository.add(record)
+        logger.info("Prompt persisted with id=%s and status=%s", saved.id, saved.status.value)
+        return saved
     @staticmethod
     def _normalize_status(raw_status: str | PromptStatus) -> PromptStatus:
         if isinstance(raw_status, PromptStatus):
